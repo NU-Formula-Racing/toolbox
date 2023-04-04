@@ -1,16 +1,23 @@
 #pragma once
+#include <Arduino.h>
+
+#include <functional>
 #include <map>
 
-class IThermistor
+class IThermistorCalculator
 {
 public:
     virtual float VoltageToTemperature(float voltage) = 0;
     virtual float TemperatureToVoltage(float temperature) = 0;
 };
 
-class NXFT15XH103FA2B050 : public IThermistor
+class NXFT15XH103FA2B050 : public IThermistorCalculator
 {
 public:
+    NXFT15XH103FA2B050(float vref = 5.0f, float series_resistance = 10000.0f)
+        : kVRef{vref}, kSeriesResistance{series_resistance}
+    {
+    }
     float VoltageToTemperature(float voltage) override
     {
         float resistance = (voltage * kSeriesResistance) / (kVRef - voltage);
@@ -82,10 +89,11 @@ private:
         {110, 758},      {111, 739.7},    {112, 721.9},    {113, 704.6},    {114, 687.8},    {115, 671.5},
         {116, 655.6},    {117, 640.2},    {118, 625.2},    {119, 610.6},    {120, 596.4},    {121, 582.6},
         {122, 569.2},    {123, 556.2},    {124, 543.5},    {125, 531.1}};
-    const float kVRef{5.0f};
-    const float kSeriesResistance{10000.0f};
 
-    float Interpolate(const std::map<float, float>& map, float x)
+    const float kVRef;
+    const float kSeriesResistance;
+
+    float Interpolate(const std::map<float, float> &map, float x)
     {
         typedef std::map<float, float>::const_iterator iterator;
         iterator ub = map.upper_bound(x);
@@ -101,5 +109,31 @@ private:
         lb--;
         const float delta = (x - lb->first) / (ub->first - lb->first);
         return delta * ub->second + (1 - delta) * lb->second;
+    }
+};
+
+class Thermistor
+{
+public:
+    Thermistor(std::function<float(void)> get_voltage, IThermistorCalculator *calculator)
+        : get_voltage_{get_voltage}, calculator_{calculator}
+    {
+    }
+
+    float GetTemperature() { return calculator_->VoltageToTemperature(get_voltage_()); }
+
+private:
+    std::function<float(void)> get_voltage_;
+    IThermistorCalculator *calculator_;
+};
+
+class NXFT15XH103FA2B050ADCThermistor : public Thermistor
+{
+public:
+    NXFT15XH103FA2B050ADCThermistor(uint8_t pin, float adc_lsb, float adc_offset, float vref, float series_resistance)
+        : Thermistor([pin, adc_lsb, adc_offset]() { return analogRead(pin) * adc_lsb + adc_offset; },
+                     new NXFT15XH103FA2B050(vref, series_resistance))
+    {
+        pinMode(pin, INPUT);
     }
 };
